@@ -1,0 +1,104 @@
+#  Copyright (c) LinkedIn Corporation.
+#  All rights reserved.
+#
+#  This source code is licensed under the license found in the
+#  LICENSE file in the root directory of this source tree.
+
+# Workflow for calculating permanent internal memory usage of test-app and generate a report based
+# on the same.
+# Note that, this workflow will run only when triggered manually.
+
+name: Permanent Internal Memory usage
+
+on:
+  pull_request:
+    branches:
+      - '*'
+
+jobs:
+  permanent_internal_memory_usage_calculate:
+    name: Permanent Internal Memory Usage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout to base branch
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: 'zulu'
+          cache: 'gradle'
+
+      - name: Start emulator, Install application and Calculate memory usage on base branch
+        id: permanent_internal_memory_usage_of_app_on_base_branch
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: google_apis
+          arch: x86_64
+          script: |
+            chmod +x ./gradlew
+            ./gradlew installDebug
+            user_data_path="/data/data/com.example.breach/"
+            adb shell pm path com.example.breach
+            echo $user_data_path
+            paths="$(adb shell pm path com.example.breach)"
+            echo $paths
+            paths=$(adb shell pm path com.example.breach)
+            echo $paths
+            adb shell pm path com.example.breach | sed 's/package://' | sed 's/base\.apk$//'
+            app_path=$(adb shell pm path com.example.breach | sed 's/package://' | sed 's/base\.apk$//')
+            echo $app_path
+            adb shell "run-as com.example.breach du $user_data_path" | grep -w $user_data_path | awk '{print $1}'
+            user_data=$(adb shell "run-as com.example.breach du /data/data/com.example.breach/" | grep -w /data/data/com.example.breach/ | awk '{print $1}')
+            echo $user_data
+            app_data=$(adb shell "run-as com.example.breach du $(adb shell pm path com.example.breach | sed 's/package://' | sed 's/base\.apk$//')" | grep -w $(adb shell pm path com.example.breach | sed 's/package://' | sed 's/base\.apk$//') | awk '{print $1}')
+            echo $app_data
+            echo $app_data
+            echo "User data = $user_data"
+            echo "App data = $app_data"
+            total_app_usage=$((user_data + app_data))
+            permanent_internal_memory_usage_of_app_on_base_branch=$(( total_app_usage/1024 ))
+            echo $permanent_internal_memory_usage_of_app_on_base_branch
+            echo "permanent_internal_memory_usage_of_app_on_base_branch=$permanent_internal_memory_usage_of_app_on_base_branch" >> $GITHUB_OUTPUT
+
+      - name: Checkout to head branch
+        uses: actions/checkout@v4
+
+      - name: Start emulator, Install application and Calculate memory usage on head branch
+        id: permanent_internal_memory_usage_of_app_on_head_branch
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: google_apis
+          arch: x86_64
+          script: |
+            chmod +x ./gradlew
+            ./gradlew installDebug
+            
+            user_data_path="/data/data/com.example.breach/"
+            app_path=$(adb shell pm path com.example.breach | sed 's/package://' | sed 's/base\.apk$//')
+            echo $app_path
+
+            user_data=$(adb shell "run-as com.example.breach du /data/data/com.example.breach/" | grep -w /data/data/com.example.breach/ | awk '{print $1}')
+            echo $user_data
+
+            app_data=$(adb shell "run-as com.example.breach du $(adb shell pm path com.example.breach | sed 's/package://' | sed 's/base\.apk$//')" | grep -w $(adb shell pm path com.example.breach | sed 's/package://' | sed 's/base\.apk$//') | awk '{print $1}')
+            echo $app_data
+
+            echo "User data = $user_data"
+            echo "App data = $app_data"
+            total_app_usage=$((user_data + app_data))
+            
+            permanent_internal_memory_usage_of_app_on_head_branch=$(( total_app_usage/1024 ))
+            echo $permanent_internal_memory_usage_of_app_on_head_branch
+            echo "permanent_internal_memory_usage_of_app_on_head_branch=$permanent_internal_memory_usage_of_app_on_head_branch" >> $GITHUB_OUTPUT
+      
+
+      - name: Render Permanent Internal Memory Report in workflow summary
+        run: |
+          chmod +x ./.github/scripts/permanent_internal_memory_usage.py
+          report_summary=$(python3 ./.github/scripts/permanent_internal_memory_usage.py ${{ steps.permanent_internal_memory_usage_of_app_on_base_branch.outputs.permanent_internal_memory_usage_of_app_on_base_branch }} ${{ steps.permanent_internal_memory_usage_of_app_on_head_branch.outputs.permanent_internal_memory_usage_of_app_on_head_branch }})
+          echo "$report_summary" >> $GITHUB_STEP_SUMMARY
