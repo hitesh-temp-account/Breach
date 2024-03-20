@@ -1,116 +1,67 @@
-name: 'Launch Emulator and run tests'
-description: 'Launches an android emulator and runs the input script'
+name: 'Create emulator, launch it then run the input script'
+description: 'Launches an Android emulator and runs the input script'
 inputs:
   script:
-    description: 'script to run after launching the emulator'
-
-defaults:
-  run:
-    shell: bash
-
-env:
-  ANDROID_ARCH: x86_64
-  ANDROID_TARGET: google_apis_playstore
-  API_LEVEL: 30
-  ANDROID_BUILD_TOOLS_VERSION: 30.0.2
-  ANDROID_SDK_PACKAGES: system-images;android-33;google_apis_playstore;x86_64 platforms;android-33 build-tools;33.0.2 platform-tools emulator
-  EMULATOR_TIMEOUT: 350
-  EMULATOR_NAME: nexus
+    description: 'Script runs after successful launch of the emulator'
+    required: false
 
 runs:
   using: 'composite'
   steps:
-      # - name: Setup Android SDK
-      #   uses: android-actions/setup-android@v3
-
-      - name: Add avdmanager and sdkmanager to system PATH
+      - name: Set Up Required Path System Variables for essential tools
+        # Adds path for essential tools like sdkmanager, avdmanager, emulator, etc.
         run: |
-            echo "$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/emulator:$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/${{ env.ANDROID_BUILD_TOOLS_VERSION }}" >> $GITHUB_PATH
+            echo "$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/emulator:$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/30.0.2" >> $GITHUB_PATH
         shell: bash
 
-      - name: Install Sdk
+      - name: SDK package licenses agreement
         run: |
-          echo "Current Working Directory: $(pwd)"
-
-          # List the contents of ./.github/scripts directory
-          ls -l ./.github/scripts
-
-          # Execute the expect script
-          chmod +x ./.github/scripts/accept_license.exp
-          ./.github/scripts/accept_license.exp
+          chmod +x ./.github/scripts/accept_sdk_licenses.sh
+          ./.github/scripts/accept_sdk_licenses.sh
         shell: bash
 
-      - name: Check if System Image is Installed
+      - name: Install System Image
         run: |
-          if [ ! -d "$ANDROID_SDK_ROOT/system-images/android-30/google_apis_playstore/x86_64" ]; then
-            echo "System image not found. Installing..."
             sdkmanager --install 'system-images;android-30;google_apis_playstore;x86_64'
+        shell: bash
+
+      - name: Create Emulator
+        id: create_emulator
+        # Create an emulator using avdmanager and do not create custom hardware profile by answering "no" to the prompt
+        run: echo "no" | avdmanager create avd -n TestEmulator30 -k "system-images;android-30;google_apis_playstore;x86_64"
+        shell: bash
+
+      - name: Check Emulator Creation Status
+        run: |
+          if [ $? -eq 0 ]; then  # Verfies the exit status of the last executed command i.e. "create_emulator", if it is 0 then the emulator is created succesfully
+            echo "Emulator creation successful"
           else
-            echo "System image already installed."
+            echo "Emulator creation failed"
+            exit 1
           fi
         shell: bash
-        
 
-      # - name: Create Emulator
-      #   id: create_emulator
-      #   run: echo "no" | avdmanager create avd -n TestAVD -k "system-images;android-30;google_apis_playstore;x86_64"
-      #   shell: bash
+      - name: Restart adb server
+        run: |
+          adb kill-server
+          adb start-server
+        shell: bash
 
-      # - name: Check Emulator Creation Status
-      #   run: |
-      #     if [ $? -eq 0 ]; then
-      #       echo "Emulator creation successful"
-      #     else
-      #       echo "Emulator creation failed"
-      #       exit 1
-      #     fi
-      #   shell: bash
+      - name: Launch Emulator
+        run: |
+          echo "~~~~~~ Starting emulator and waiting for boot to complete.... ~~~~~~"
+          $ANDROID_HOME/emulator/emulator -avd TestEmulator30 -no-skin -no-audio -no-window &
+          adb wait-for-device  # Waits until emulator is connected and ready/responsive to accept commands
+          echo "~~~~~~ Emulator has finished booting ~~~~~~"
+        shell: bash
 
-      # # - name: Create Emulator
-      # #   run: echo "no" |
-      # #     avdmanager create avd -n TestAVD -k "system-images;android-30;google_apis_playstore;x86_64"
+      - name: Build App
+        run: |
+          chmod +x gradlew
+          ./gradlew installDebug
+        shell: bash
 
-      # - name: Restart adb server
-      #   run: |
-      #     adb kill-server
-      #     adb start-server
-      #   shell: bash
-
-      # - name: Launch Emulator
-      #   run: |
-      #     echo "Starting emulator and waiting for boot to complete...."
-      #     $ANDROID_HOME/emulator/emulator -avd TestAVD -no-skin -no-audio -no-window &
-      #     adb wait-for-device 
-      #     echo "Emulator has finished booting"
-      #     adb devices
-      #   shell: bash
-      
-      # - name: Build App
-      #   run: |
-      #     chmod +x gradlew
-      #     ./gradlew assembleDebug
-      #   shell: bash
-
-      # - name: Find and install App
-      #   run: |
-      #     apk_path=$(find . -type f -and -path '*debug.apk')
-      #     echo $apk_path
-      #     # adb shell pm uninstall com.example.breach
-      #     adb -s emulator-5554 install /Users/runner/work/breach/breach/app/build/outputs/apk/debug/app-debug.apk
-      #   shell: bash
-
-
-      # - name: Run script
-      #   run: bash -c "${{ inputs.script }}"
-      #   shell: bash
-
-      # # - name: Upload logs
-      # #   uses: actions/upload-artifact@v2
-      # #   with:
-      # #     name: logs
-      # #     path: app/emulator.log
-
-      # - name: Uninstall the app
-      #   run: |
-      #     adb shell pm uninstall com.example.breach
-      #   shell: bash
+      - name: Run script if provided
+        if: inputs.script != ''
+        run: bash -c "${{ inputs.script }}"
+        shell: bash
